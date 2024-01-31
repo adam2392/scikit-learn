@@ -456,6 +456,11 @@ cdef inline int node_split_best(
                 current_split.pos = p
                 criterion.update(current_split.pos)
 
+                # Reject if min_weight_leaf is not satisfied
+                if ((criterion.weighted_n_left < min_weight_leaf) or
+                        (criterion.weighted_n_right < min_weight_leaf)):
+                    continue
+
                 # Reject if monotonicity constraints are not satisfied
                 if (
                     with_monotonic_cst and
@@ -466,11 +471,6 @@ cdef inline int node_split_best(
                         upper_bound,
                     )
                 ):
-                    continue
-
-                # Reject if min_weight_leaf is not satisfied
-                if ((criterion.weighted_n_left < min_weight_leaf) or
-                        (criterion.weighted_n_right < min_weight_leaf)):
                     continue
 
                 current_proxy_improvement = criterion.proxy_impurity_improvement()
@@ -533,6 +533,7 @@ cdef inline int node_split_best(
 
         criterion.reset()
         criterion.update(best_split.pos)
+
         criterion.children_impurity(
             &best_split.impurity_left, &best_split.impurity_right
         )
@@ -542,6 +543,10 @@ cdef inline int node_split_best(
             best_split.impurity_right
         )
 
+        # Note: this should always be called at the very end because it will
+        # move samples around, thereby affecting the criterion.
+        # This affects the computation of the children impurity, which affects
+        # the computation of the next node.
         shift_missing_values_to_left_if_required(&best_split, samples, end)
 
     # Respect invariant for constant features: the original order of
@@ -838,13 +843,13 @@ cdef inline int node_split_random(
                 max_feature_value,
                 random_state,
             )
-
             if has_missing:
                 # If there are missing values, then we randomly make all missing
                 # values go to the right, or left
                 missing_go_to_left = rand_int(0, 2, random_state)
             else:
                 missing_go_to_left = 0
+            criterion.reset()
             criterion.missing_go_to_left = missing_go_to_left
 
             if current_split.threshold == max_feature_value:
@@ -869,7 +874,6 @@ cdef inline int node_split_random(
             # Evaluate split
             # At this point, the criterion has a view into the samples that was partitioned
             # by the partitioner. The criterion will use the partition to evaluating the split.
-            criterion.reset()
             criterion.update(current_split.pos)
 
             # Reject if min_weight_leaf is not satisfied
@@ -892,30 +896,29 @@ cdef inline int node_split_random(
             current_proxy_improvement = criterion.proxy_impurity_improvement()
 
             if current_proxy_improvement > best_proxy_improvement:
-                current_split.n_missing = n_missing
-
                 if n_missing == 0:
                     current_split.missing_go_to_left = n_left > n_right
                 else:
                     current_split.missing_go_to_left = missing_go_to_left
 
+                current_split.n_missing = n_missing
                 best_proxy_improvement = current_proxy_improvement
                 best_split = current_split  # copy
 
     # Reorganize into samples[start:best.pos] + samples[best.pos:end]
     if best_split.pos < end:
-        if current_split.feature != best_split.feature:
-            partitioner.partition_samples_final(
-                best_split.pos,
-                best_split.threshold,
-                best_split.feature,
-                best_split.n_missing
-            )
+        partitioner.partition_samples_final(
+            best_split.pos,
+            best_split.threshold,
+            best_split.feature,
+            best_split.n_missing
+        )
         criterion.init_missing(best_split.n_missing)
         criterion.missing_go_to_left = best_split.missing_go_to_left
 
         criterion.reset()
         criterion.update(best_split.pos)
+
         criterion.children_impurity(
             &best_split.impurity_left, &best_split.impurity_right
         )
@@ -925,6 +928,10 @@ cdef inline int node_split_random(
             best_split.impurity_right
         )
 
+        # Note: this should always be called at the very end because it will
+        # move samples around, thereby affecting the criterion.
+        # This affects the computation of the children impurity, which affects
+        # the computation of the next node.
         shift_missing_values_to_left_if_required(&best_split, samples, end)
 
     # Respect invariant for constant features: the original order of
@@ -1064,7 +1071,7 @@ cdef class DensePartitioner:
 
                 # X[samples[current_end], current_feature] is a non-missing value
                 if isnan(X[samples[p], current_feature]):
-                    samples[p], samples[current_end] = samples[current_end], samples[p]
+                    # samples[p], samples[current_end] = samples[current_end], samples[p]
                     n_missing += 1
                     current_end -= 1
 
@@ -1180,7 +1187,6 @@ cdef class DensePartitioner:
                     # we can continue the algorithm without checking for missingness.
                     current_value = X[samples[p], best_feature]
 
-                # Partition the non-missing samples
                 if current_value <= best_threshold:
                     p += 1
                 else:

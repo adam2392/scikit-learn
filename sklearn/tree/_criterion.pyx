@@ -435,7 +435,6 @@ cdef class ClassificationCriterion(Criterion):
             return
 
         memset(&self.sum_missing[0, 0], 0, self.max_n_classes * self.n_outputs * sizeof(float64_t))
-
         self.weighted_n_missing = 0.0
 
         # The missing samples are assumed to be in self.sample_indices[-n_missing:]
@@ -931,7 +930,6 @@ cdef class RegressionCriterion(Criterion):
             return
 
         memset(&self.sum_missing[0], 0, self.n_outputs * sizeof(float64_t))
-
         self.weighted_n_missing = 0.0
 
         # The missing samples are assumed to be in self.sample_indices[-n_missing:]
@@ -1150,6 +1148,8 @@ cdef class MSE(RegressionCriterion):
         cdef intp_t k
         cdef float64_t w = 1.0
 
+        cdef intp_t end_non_missing = self.end - self.n_missing
+
         for p in range(start, pos):
             i = sample_indices[p]
 
@@ -1159,6 +1159,19 @@ cdef class MSE(RegressionCriterion):
             for k in range(self.n_outputs):
                 y_ik = self.y[i, k]
                 sq_sum_left += w * y_ik * y_ik
+
+        # Account for missing values that may be on the left node.
+        # If so, then these samples are still not included in the
+        # sq_sum_left because they are in samples[end_non_missing:end].
+        if self.missing_go_to_left:
+            for p in range(end_non_missing, self.end):
+                i = sample_indices[p]
+                if sample_weight is not None:
+                    w = sample_weight[i]
+
+                for k in range(self.n_outputs):
+                    y_ik = self.y[i, k]
+                    sq_sum_left += w * y_ik * y_ik
 
         sq_sum_right = self.sq_sum_total - sq_sum_left
 
@@ -1644,11 +1657,26 @@ cdef class Poisson(RegressionCriterion):
         cdef intp_t pos = self.pos
         cdef intp_t end = self.end
 
+        # The missing samples are assumed to be in
+        # self.sample_indices[-self.n_missing:] that is
+        # self.sample_indices[end_non_missing:self.end].
+        cdef intp_t end_non_missing = self.end - self.n_missing
+        cdef float64_t missing_poisson_loss_left = 0.0
+
+        # Account for missing values that may be on the left node.
+        # If so, then these samples are still not included in the
+        # sq_sum_left because they are in samples[end_non_missing:end].
+        if self.missing_go_to_left:
+            missing_poisson_loss_left = self.poisson_loss(
+                end_non_missing, self.end, self.sum_left,
+                self.weighted_n_missing)
+                    
         impurity_left[0] = self.poisson_loss(start, pos, self.sum_left,
-                                             self.weighted_n_left)
+                                             self.weighted_n_left) + missing_poisson_loss_left
 
         impurity_right[0] = self.poisson_loss(pos, end, self.sum_right,
                                               self.weighted_n_right)
+
 
     cdef inline float64_t poisson_loss(
         self,
