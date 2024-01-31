@@ -16,7 +16,7 @@ from joblib.numpy_pickle import NumpyPickler
 from numpy.testing import assert_allclose
 
 from sklearn import datasets, tree
-from sklearn.dummy import DummyRegressor
+from sklearn.dummy import DummyClassifier, DummyRegressor
 from sklearn.exceptions import NotFittedError
 from sklearn.metrics import accuracy_score, mean_poisson_deviance, mean_squared_error
 from sklearn.model_selection import train_test_split
@@ -2385,7 +2385,7 @@ def test_min_sample_split_1_error(Tree):
 
 
 @pytest.mark.parametrize("criterion", ["squared_error", "friedman_mse"])
-def test_missing_values_on_equal_nodes_no_missing(criterion):
+def test_missing_values_best_splitter_on_equal_nodes_no_missing(criterion):
     """Check missing values goes to correct node during predictions"""
     X = np.array([[0, 1, 2, 3, 8, 9, 11, 12, 15]]).T
     y = np.array([0.1, 0.2, 0.3, 0.2, 1.4, 1.4, 1.5, 1.6, 2.6])
@@ -2408,6 +2408,43 @@ def test_missing_values_on_equal_nodes_no_missing(criterion):
     # missing_go_to_left = n_left > n_right, which is False
     y_pred = dtc.predict([[np.nan]])
     assert_allclose(y_pred, [np.mean(y_equal[-4:])])
+
+
+@pytest.mark.parametrize("criterion", ["squared_error", "friedman_mse"])
+def test_missing_values_random_splitter_on_equal_nodes_no_missing(criterion):
+    """Check missing values goes to correct node during predictions.
+
+    When there are no missing values during training, missing-values during
+    prediction
+    """
+    X = np.array([[0, 1, 2, 3, 8, 9, 11, 12, 15]]).T
+    y = np.array([0.1, 0.2, 0.3, 0.2, 1.4, 1.4, 1.5, 1.6, 2.6])
+
+    dtc = ExtraTreeRegressor(random_state=42, max_depth=2, criterion=criterion)
+    dtc.fit(X, y)
+
+    # Goes to right node because it has the most data points
+    decision_path = dtc.decision_path([[np.nan]])
+
+    # Note: when max_leaf_nodes is not defined, the implementation will build
+    # the tree using DFS
+    # For a 7-node binary tree with DFS traversal, this results in the following
+    # decision-path of the nodes, which is the right-side view of the binary tree
+    expected_decision_path = [[1, 0, 0, 0, 1, 0, 1]]
+    assert_array_equal(decision_path.toarray(), expected_decision_path)
+
+    # BFS building of the binary tree
+    dtc = ExtraTreeRegressor(
+        random_state=42, max_depth=2, criterion=criterion, max_leaf_nodes=5
+    )
+    dtc.fit(X, y)
+    decision_path = dtc.decision_path([[np.nan]])
+    # Note: when max_leaf_nodes is defined, the implementation will build
+    # the tree using BFS
+    # For a 7-node binary tree with BFS traversal, this results in the following
+    # decision-path of the nodes, which is the right-side view of the binary tree
+    expected_decision_path = [[1, 0, 1, 0, 1, 0, 0]]
+    assert_array_equal(decision_path.toarray(), expected_decision_path)
 
 
 @pytest.mark.parametrize("criterion", ["entropy", "gini"])
@@ -2459,7 +2496,7 @@ def test_missing_values_best_splitter_to_right(criterion):
 
 
 @pytest.mark.parametrize("criterion", ["entropy", "gini"])
-def test_missing_values_missing_both_classes_has_nan(criterion):
+def test_missing_values_best_splitter_missing_both_classes_has_nan(criterion):
     """Check behavior of missing value when there is one missing value in each class."""
     X = np.array([[1, 2, 3, 5, np.nan, 10, 20, 30, 60, np.nan]]).T
     y = np.array([0] * 5 + [1] * 5)
@@ -2478,8 +2515,8 @@ def test_missing_values_missing_both_classes_has_nan(criterion):
 @pytest.mark.parametrize(
     "tree",
     [
-        DecisionTreeClassifier(splitter="random"),
         DecisionTreeRegressor(criterion="absolute_error"),
+        ExtraTreeRegressor(criterion="absolute_error"),
     ],
 )
 def test_missing_value_errors(sparse_container, tree):
@@ -2495,7 +2532,8 @@ def test_missing_value_errors(sparse_container, tree):
         tree.fit(X, y)
 
 
-def test_missing_values_poisson():
+@pytest.mark.parametrize("Tree", REG_TREES.values())
+def test_missing_values_poisson(Tree):
     """Smoke test for poisson regression and missing values."""
     X, y = diabetes.data.copy(), diabetes.target
 
@@ -2503,7 +2541,7 @@ def test_missing_values_poisson():
     X[::5, 0] = np.nan
     X[::6, -1] = np.nan
 
-    reg = DecisionTreeRegressor(criterion="poisson", random_state=42)
+    reg = Tree(criterion="poisson", random_state=42)
     reg.fit(X, y)
 
     y_pred = reg.predict(X)
@@ -2511,14 +2549,23 @@ def test_missing_values_poisson():
 
 
 @pytest.mark.parametrize(
-    "make_data, Tree",
+    "make_data, Tree, resilience_score, dummy_model",
     [
-        (datasets.make_regression, DecisionTreeRegressor),
-        (datasets.make_classification, DecisionTreeClassifier),
+        (datasets.make_regression, DecisionTreeRegressor, 0.9, DummyRegressor),
+        (datasets.make_classification, DecisionTreeClassifier, 0.9, DummyClassifier),
+        (datasets.make_regression, ExtraTreeRegressor, 0.2, DummyRegressor),
+        (
+            datasets.make_classification,
+            ExtraTreeClassifier,
+            0.8,
+            DummyClassifier,
+        ),
     ],
 )
 @pytest.mark.parametrize("sample_weight_train", [None, "ones"])
-def test_missing_values_is_resilience(make_data, Tree, sample_weight_train):
+def test_missing_values_is_resilience(
+    make_data, Tree, resilience_score, dummy_model, sample_weight_train
+):
     """Check that trees can deal with missing values and have decent performance."""
 
     rng = np.random.RandomState(0)
@@ -2527,7 +2574,7 @@ def test_missing_values_is_resilience(make_data, Tree, sample_weight_train):
 
     # Create dataset with missing values
     X_missing = X.copy()
-    X_missing[rng.choice([False, True], size=X.shape, p=[0.9, 0.1])] = np.nan
+    X_missing[rng.choice([False, True], size=X.shape, p=[0.95, 0.05])] = np.nan
     X_missing_train, X_missing_test, y_train, y_test = train_test_split(
         X_missing, y, random_state=0
     )
@@ -2536,21 +2583,34 @@ def test_missing_values_is_resilience(make_data, Tree, sample_weight_train):
         sample_weight_train = np.ones(X_missing_train.shape[0])
 
     # Train tree with missing values
-    tree_with_missing = Tree(random_state=rng)
+    tree_with_missing = Tree(random_state=0)
     tree_with_missing.fit(X_missing_train, y_train, sample_weight=sample_weight_train)
     score_with_missing = tree_with_missing.score(X_missing_test, y_test)
 
     # Train tree without missing values
     X_train, X_test, y_train, y_test = train_test_split(X, y, random_state=0)
-    tree = Tree(random_state=rng)
+    tree = Tree(random_state=0)
     tree.fit(X_train, y_train, sample_weight=sample_weight_train)
     score_without_missing = tree.score(X_test, y_test)
 
-    # Score is still 90 percent of the tree's score that had no missing values
-    assert score_with_missing >= 0.9 * score_without_missing
+    # We should definitely be better than the dummy model
+    # dummy_score = dummy_model().fit(X_train, y_train).score(X_test, y_test)
+
+    # Score is still a relatively large percent of the tree's score that had
+    # no missing values
+    # assert (
+    #     score_without_missing > dummy_score
+    # ), f"{score_without_missing} is not > than {dummy_score}"
+    # assert (
+    #     score_with_missing > dummy_score
+    # ), f"{score_with_missing} is not > than {dummy_score}"
+    assert (
+        score_with_missing >= resilience_score * score_without_missing
+    ), f"{score_with_missing} is not > than {resilience_score * score_without_missing}"
 
 
-def test_missing_value_is_predictive():
+@pytest.mark.parametrize("Tree, expected_score", zip(CLF_TREES.values(), [0.85, 0.66]))
+def test_missing_value_is_predictive(Tree, expected_score):
     """Check the tree learns when only the missing value is predictive."""
     rng = np.random.RandomState(0)
     n_samples = 1000
@@ -2569,10 +2629,10 @@ def test_missing_value_is_predictive():
     X[:, 5] = X_predictive
 
     X_train, X_test, y_train, y_test = train_test_split(X, y, random_state=rng)
-    tree = DecisionTreeClassifier(random_state=rng).fit(X_train, y_train)
+    tree = Tree(random_state=rng).fit(X_train, y_train)
 
-    assert tree.score(X_train, y_train) >= 0.85
-    assert tree.score(X_test, y_test) >= 0.85
+    assert tree.score(X_train, y_train) >= expected_score
+    assert tree.score(X_test, y_test) >= expected_score
 
 
 @pytest.mark.parametrize(
@@ -2617,7 +2677,8 @@ def test_deterministic_pickle():
     assert pickle1 == pickle2
 
 
-def test_regression_tree_missing_values_toy():
+@pytest.mark.parametrize("Tree", [DecisionTreeRegressor, ExtraTreeRegressor])
+def test_regression_tree_missing_values_toy(Tree):
     """Check that we properly handle missing values in regression trees using a toy
     dataset.
 
@@ -2636,7 +2697,7 @@ def test_regression_tree_missing_values_toy():
     X = np.array([np.nan, np.nan, 3, 4, 5, 6]).reshape(-1, 1)
     y = np.arange(6)
 
-    tree = DecisionTreeRegressor(random_state=0).fit(X, y)
+    tree = Tree(random_state=0).fit(X, y)
     assert all(tree.tree_.impurity >= 0)  # MSE should always be positive
 
     # Find the leaves with a single sample where the MSE should be 0
@@ -2645,8 +2706,15 @@ def test_regression_tree_missing_values_toy():
     )
     assert_allclose(tree.tree_.impurity[leaves_idx], 0.0)
 
+    # With this dataset, the missing values will still be sent to the left child
+    # but the leaf will not be pure.
+    X = np.array([np.nan, 2, np.nan, 4, 5, 6]).reshape(-1, 1)
+    tree = Tree(random_state=0, max_depth=1).fit(X, y)
+    assert all(tree.tree_.impurity >= 0)  # MSE should always be positive
 
-def test_classification_tree_missing_values_toy():
+
+@pytest.mark.parametrize("Tree", [DecisionTreeClassifier, ExtraTreeClassifier])
+def test_classification_tree_missing_values_toy(Tree):
     """Check that we properly handle missing values in clasification trees using a toy
     dataset.
 
@@ -2681,9 +2749,7 @@ def test_classification_tree_missing_values_toy():
     ], dtype=np.int32)
     # fmt: on
 
-    tree = DecisionTreeClassifier(
-        max_depth=3, max_features="sqrt", random_state=1857819720
-    )
+    tree = Tree(max_depth=3, max_features="sqrt", random_state=1857819720)
     tree.fit(X_train[indices], y_train[indices])
     assert all(tree.tree_.impurity >= 0)
 
