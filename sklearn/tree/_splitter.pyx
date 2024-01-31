@@ -456,11 +456,6 @@ cdef inline int node_split_best(
                 current_split.pos = p
                 criterion.update(current_split.pos)
 
-                # Reject if min_weight_leaf is not satisfied
-                if ((criterion.weighted_n_left < min_weight_leaf) or
-                        (criterion.weighted_n_right < min_weight_leaf)):
-                    continue
-
                 # Reject if monotonicity constraints are not satisfied
                 if (
                     with_monotonic_cst and
@@ -471,6 +466,11 @@ cdef inline int node_split_best(
                         upper_bound,
                     )
                 ):
+                    continue
+
+                # Reject if min_weight_leaf is not satisfied
+                if ((criterion.weighted_n_left < min_weight_leaf) or
+                        (criterion.weighted_n_right < min_weight_leaf)):
                     continue
 
                 current_proxy_improvement = criterion.proxy_impurity_improvement()
@@ -812,6 +812,12 @@ cdef inline int node_split_random(
         # and missing-values
         separate_nan_and_non_nans = has_missing and (rand_int(0, 2, random_state) == 1)
 
+        with gil:
+            print('Inside splitter: ')
+            print(criterion.start, criterion.pos, criterion.end)
+            for idx in range(len(criterion.sample_indices)):
+                print(criterion.sample_indices[idx])
+            print(criterion.missing_go_to_left)
         if separate_nan_and_non_nans:
             missing_go_to_left = rand_int(0, 2, random_state)
             p = end - n_missing

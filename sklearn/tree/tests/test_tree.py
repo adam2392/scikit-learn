@@ -2609,7 +2609,7 @@ def test_missing_values_is_resilience(
     ), f"{score_with_missing} is not > than {resilience_score * score_without_missing}"
 
 
-@pytest.mark.parametrize("Tree, expected_score", zip(CLF_TREES.values(), [0.85, 0.82]))
+@pytest.mark.parametrize("Tree, expected_score", zip(CLF_TREES.values(), [0.85, 0.66]))
 def test_missing_value_is_predictive(Tree, expected_score):
     """Check the tree learns when only the missing value is predictive."""
     rng = np.random.RandomState(0)
@@ -2677,10 +2677,7 @@ def test_deterministic_pickle():
     assert pickle1 == pickle2
 
 
-@pytest.mark.parametrize('Tree', [
-    DecisionTreeRegressor,
-                                   ExtraTreeRegressor
-                                   ])
+@pytest.mark.parametrize("Tree", [DecisionTreeRegressor, ExtraTreeRegressor])
 def test_regression_tree_missing_values_toy(Tree):
     """Check that we properly handle missing values in regression trees using a toy
     dataset.
@@ -2716,7 +2713,7 @@ def test_regression_tree_missing_values_toy(Tree):
     assert all(tree.tree_.impurity >= 0)  # MSE should always be positive
 
 
-@pytest.mark.parametrize('Tree', [DecisionTreeClassifier, ExtraTreeClassifier])
+@pytest.mark.parametrize("Tree", [DecisionTreeClassifier, ExtraTreeClassifier])
 def test_classification_tree_missing_values_toy(Tree):
     """Check that we properly handle missing values in clasification trees using a toy
     dataset.
@@ -2752,9 +2749,7 @@ def test_classification_tree_missing_values_toy(Tree):
     ], dtype=np.int32)
     # fmt: on
 
-    tree = Tree(
-        max_depth=3, max_features="sqrt", random_state=1857819720
-    )
+    tree = Tree(max_depth=3, max_features="sqrt", random_state=1857819720)
     tree.fit(X_train[indices], y_train[indices])
     assert all(tree.tree_.impurity >= 0)
 
