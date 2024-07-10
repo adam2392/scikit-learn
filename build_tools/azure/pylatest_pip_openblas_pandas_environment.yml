@@ -19,10 +19,13 @@ dependencies:
     - pytest
     - pytest-xdist
     - pillow
-    - setuptools
+    - ninja
+    - meson-python
     - pytest-cov
     - coverage
     - sphinx
     - numpydoc
     - lightgbm
     - scikit-image
+    - array-api-compat
+    - array-api-strict
