@@ -14,27 +14,27 @@ cdef packed struct hist_struct:
     # to be packed since by default numpy dtypes aren't aligned
     Y_DTYPE_C sum_gradients
     Y_DTYPE_C sum_hessians
-    unsigned int count
+    uint32_t count
 
 
 cdef packed struct node_struct:
     # Equivalent struct to PREDICTOR_RECORD_DTYPE to use in memory views. It
     # needs to be packed since by default numpy dtypes aren't aligned
     Y_DTYPE_C value
-    unsigned int count
+    uint32_t count
     intp_t feature_idx
     X_DTYPE_C num_threshold
-    unsigned char missing_go_to_left
-    unsigned int left
-    unsigned int right
+    uint8_t missing_go_to_left
+    uint32_t left
+    uint32_t right
     Y_DTYPE_C gain
-    unsigned int depth
-    unsigned char is_leaf
+    uint32_t depth
+    uint8_t is_leaf
     X_BINNED_DTYPE_C bin_threshold
-    unsigned char is_categorical
+    uint8_t is_categorical
     # The index of the corresponding bitsets in the Predictor's bitset arrays.
     # Only used if is_categorical is True
-    unsigned int bitset_idx
+    uint32_t bitset_idx
 
 
 cpdef enum MonotonicConstraint:

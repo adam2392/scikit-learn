@@ -32,7 +32,7 @@ from time import time
 from cython cimport floating
 from libc.math cimport exp, fabs, isfinite, log, pow, INFINITY
 
-from ..utils._typedefs cimport uint32_t
+from ..utils._typedefs cimport uint8_t, uint32_t, intp_t
 from ..utils._weight_vector cimport WeightVector32, WeightVector64
 from ..utils._seq_dataset cimport SequentialDataset32, SequentialDataset64
 
@@ -53,17 +53,17 @@ cdef extern from *:
     #define PA1 5
     #define PA2 6
     """
-    int NO_PENALTY = 0
-    int L1 = 1
-    int L2 = 2
-    int ELASTICNET = 3
+    intp_t NO_PENALTY = 0
+    intp_t L1 = 1
+    intp_t L2 = 2
+    intp_t ELASTICNET = 3
 
-    int CONSTANT = 1
-    int OPTIMAL = 2
-    int INVSCALING = 3
-    int ADAPTIVE = 4
-    int PA1 = 5
-    int PA2 = 6
+    intp_t CONSTANT = 1
+    intp_t OPTIMAL = 2
+    intp_t INVSCALING = 3
+    intp_t ADAPTIVE = 4
+    intp_t PA1 = 5
+    intp_t PA2 = 6
 
 
 # ----------------------------------------
@@ -397,30 +397,30 @@ def _plain_sgd{{name_suffix}}(
     const {{c_type}}[::1] average_weights,
     double average_intercept,
     LossFunction loss,
-    int penalty_type,
+    intp_t penalty_type,
     double alpha,
     double C,
     double l1_ratio,
     SequentialDataset{{name_suffix}} dataset,
-    const unsigned char[::1] validation_mask,
+    const uint8_t[::1] validation_mask,
     bint early_stopping,
     validation_score_cb,
-    int n_iter_no_change,
-    unsigned int max_iter,
+    intp_t n_iter_no_change,
+    uint32_t max_iter,
     double tol,
-    int fit_intercept,
-    int verbose,
+    intp_t fit_intercept,
+    intp_t verbose,
     bint shuffle,
     uint32_t seed,
     double weight_pos,
     double weight_neg,
-    int learning_rate,
+    intp_t learning_rate,
     double eta0,
     double power_t,
     bint one_class,
     double t=1.0,
     double intercept_decay=1.0,
-    int average=0,
+    intp_t average=0,
 ):
     """SGD for generic loss functions and penalties with optional averaging
 
@@ -437,7 +437,7 @@ def _plain_sgd{{name_suffix}}(
         The average intercept for ASGD. Should be 0 if average is 0.
     loss : LossFunction
         A concrete ``LossFunction`` object.
-    penalty_type : int
+    penalty_type : intp_t
         The penalty 2 for L2, 1 for L1, and 3 for Elastic-Net.
     alpha : float
         The regularization parameter.
@@ -448,7 +448,7 @@ def _plain_sgd{{name_suffix}}(
         l1_ratio=0 corresponds to L2 penalty, l1_ratio=1 to L1.
     dataset : SequentialDataset
         A concrete ``SequentialDataset`` object.
-    validation_mask : ndarray[unsigned char, ndim=1]
+    validation_mask : ndarray[uint8_t, ndim=1]
         Equal to True on the validation set.
     early_stopping : boolean
         Whether to use a stopping criterion based on the validation set.
@@ -456,15 +456,15 @@ def _plain_sgd{{name_suffix}}(
         A callable to compute a validation score given the current
         coefficients and intercept values.
         Used only if early_stopping is True.
-    n_iter_no_change : int
+    n_iter_no_change : intp_t
         Number of iteration with no improvement to wait before stopping.
-    max_iter : int
+    max_iter : intp_t
         The maximum number of iterations (epochs).
     tol: double
         The tolerance for the stopping criterion.
-    fit_intercept : int
+    fit_intercept : intp_t
         Whether or not to fit the intercept (1 or 0).
-    verbose : int
+    verbose : intp_t
         Print verbose output; 0 for quite.
     shuffle : boolean
         Whether to shuffle the training data before each epoch.
@@ -474,7 +474,7 @@ def _plain_sgd{{name_suffix}}(
         The weight of the negative class.
     seed : uint32_t
         Seed of the pseudorandom number generator used to shuffle the data.
-    learning_rate : int
+    learning_rate : intp_t
         The learning rate:
         (1) constant, eta = eta0
         (2) optimal, eta = 1.0/(alpha * t).
@@ -492,7 +492,7 @@ def _plain_sgd{{name_suffix}}(
         Initial state of the learning rate. This value is equal to the
         iteration count except when the learning rate is set to `optimal`.
         Default: 1.0.
-    average : int
+    average : intp_t
         The number of iterations before averaging starts. average=1 is
         equivalent to averaging for all iterations.
 
@@ -509,7 +509,7 @@ def _plain_sgd{{name_suffix}}(
     average_intercept : float
         The averaged intercept across iterations.
         Values are valid only if average > 0.
-    n_iter_ : int
+    n_iter_ : intp_t
         The actual number of iter (epochs).
     """
 
@@ -519,12 +519,12 @@ def _plain_sgd{{name_suffix}}(
 
     cdef WeightVector{{name_suffix}} w = WeightVector{{name_suffix}}(weights, average_weights)
     cdef {{c_type}} *x_data_ptr = NULL
-    cdef int *x_ind_ptr = NULL
+    cdef intp_t *x_ind_ptr = NULL
 
     # helper variables
-    cdef int no_improvement_count = 0
+    cdef intp_t no_improvement_count = 0
     cdef bint infinity = False
-    cdef int xnnz
+    cdef intp_t xnnz
     cdef double eta = 0.0
     cdef double p = 0.0
     cdef double update = 0.0
@@ -536,11 +536,11 @@ def _plain_sgd{{name_suffix}}(
     cdef {{c_type}} y = 0.0
     cdef {{c_type}} sample_weight
     cdef {{c_type}} class_weight = 1.0
-    cdef unsigned int count = 0
-    cdef unsigned int train_count = n_samples - np.sum(validation_mask)
-    cdef unsigned int epoch = 0
-    cdef unsigned int i = 0
-    cdef int is_hinge = isinstance(loss, Hinge)
+    cdef uint32_t count = 0
+    cdef uint32_t train_count = n_samples - np.sum(validation_mask)
+    cdef uint32_t epoch = 0
+    cdef uint32_t i = 0
+    cdef intp_t is_hinge = isinstance(loss, Hinge)
     cdef double optimal_init = 0.0
     cdef double dloss = 0.0
     cdef double MAX_DLOSS = 1e12
@@ -733,11 +733,11 @@ cdef inline bint any_nonfinite(const floating[::1] w) noexcept nogil:
 
 cdef inline double sqnorm(
     floating * x_data_ptr,
-    int * x_ind_ptr,
-    int xnnz,
+    intp_t * x_ind_ptr,
+    intp_t xnnz,
 ) noexcept nogil:
     cdef double x_norm = 0.0
-    cdef int j
+    cdef intp_t j
     cdef double z
     for j in range(xnnz):
         z = x_data_ptr[j]
@@ -750,8 +750,8 @@ cdef inline double sqnorm(
 cdef void l1penalty{{name_suffix}}(
     WeightVector{{name_suffix}} w,
     {{c_type}} * q_data_ptr,
-    int *x_ind_ptr,
-    int xnnz,
+    intp_t *x_ind_ptr,
+    intp_t xnnz,
     double u,
 ) noexcept nogil:
     """Apply the L1 penalty to each updated feature
@@ -760,8 +760,8 @@ cdef void l1penalty{{name_suffix}}(
     [Tsuruoka, Y., Tsujii, J., and Ananiadou, S., 2009].
     """
     cdef double z = 0.0
-    cdef int j = 0
-    cdef int idx = 0
+    cdef intp_t j = 0
+    cdef intp_t idx = 0
     cdef double wscale = w.wscale
     cdef {{c_type}} *w_data_ptr = w.w_data_ptr
     for j in range(xnnz):

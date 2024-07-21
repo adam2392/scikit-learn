@@ -3,14 +3,15 @@
 from cython.parallel import prange
 from libc.math cimport isnan
 
+from ..utils._type_defs cimport uint8_t, intp_t
 from .common cimport X_DTYPE_C, X_BINNED_DTYPE_C
 
 
 def _map_to_bins(const X_DTYPE_C [:, :] data,
                  list binning_thresholds,
-                 const unsigned char[::1] is_categorical,
-                 const unsigned char missing_values_bin_idx,
-                 int n_threads,
+                 const uint8_t[::1] is_categorical,
+                 const uint8_t missing_values_bin_idx,
+                 intp_t n_threads,
                  X_BINNED_DTYPE_C [::1, :] binned):
     """Bin continuous and categorical values to discrete integer-coded levels.
 
@@ -24,15 +25,15 @@ def _map_to_bins(const X_DTYPE_C [:, :] data,
     binning_thresholds : list of arrays
         For each feature, stores the increasing numeric values that are
         used to separate the bins.
-    is_categorical : ndarray of unsigned char of shape (n_features,)
+    is_categorical : ndarray of uint8_t of shape (n_features,)
         Indicates categorical features.
-    n_threads : int
+    n_threads : intp_t
         Number of OpenMP threads to use.
     binned : ndarray, shape (n_samples, n_features)
         Output array, must be fortran aligned.
     """
     cdef:
-        int feature_idx
+        intp_t feature_idx
 
     for feature_idx in range(data.shape[1]):
         _map_col_to_bins(
@@ -48,17 +49,17 @@ def _map_to_bins(const X_DTYPE_C [:, :] data,
 cdef void _map_col_to_bins(
     const X_DTYPE_C [:] data,
     const X_DTYPE_C [:] binning_thresholds,
-    const unsigned char is_categorical,
-    const unsigned char missing_values_bin_idx,
-    int n_threads,
+    const uint8_t is_categorical,
+    const uint8_t missing_values_bin_idx,
+    intp_t n_threads,
     X_BINNED_DTYPE_C [:] binned
 ):
     """Binary search to find the bin index for each value in the data."""
     cdef:
-        int i
-        int left
-        int right
-        int middle
+        intp_t i
+        intp_t left
+        intp_t right
+        intp_t middle
 
     for i in prange(data.shape[0], schedule='static', nogil=True,
                     num_threads=n_threads):

@@ -4,7 +4,7 @@ from cython.parallel import prange
 from libc.math cimport isnan
 import numpy as np
 
-from ...utils._typedefs cimport intp_t
+from ...utils._typedefs cimport intp_t, uint8_t, uint32_t
 from .common cimport X_DTYPE_C
 from .common cimport Y_DTYPE_C
 from .common import Y_DTYPE
@@ -19,12 +19,12 @@ def _predict_from_raw_data(  # raw data = non-binned data
         const X_DTYPE_C [:, :] numeric_data,
         const BITSET_INNER_DTYPE_C [:, ::1] raw_left_cat_bitsets,
         const BITSET_INNER_DTYPE_C [:, ::1] known_cat_bitsets,
-        const unsigned int [::1] f_idx_map,
-        int n_threads,
+        const uint32_t [::1] f_idx_map,
+        inpt_t n_threads,
         Y_DTYPE_C [:] out):
 
     cdef:
-        int i
+        inpt_t i
 
     for i in prange(numeric_data.shape[0], schedule='static', nogil=True,
                     num_threads=n_threads):
@@ -39,14 +39,14 @@ cdef inline Y_DTYPE_C _predict_one_from_raw_data(
         const X_DTYPE_C [:, :] numeric_data,
         const BITSET_INNER_DTYPE_C [:, ::1] raw_left_cat_bitsets,
         const BITSET_INNER_DTYPE_C [:, ::1] known_cat_bitsets,
-        const unsigned int [::1] f_idx_map,
-        const int row) noexcept nogil:
+        const uint32_t [::1] f_idx_map,
+        const inpt_t row) noexcept nogil:
     # Need to pass the whole array and the row index, else prange won't work.
     # See issue Cython #2798
 
     cdef:
         node_struct node = nodes[0]
-        unsigned int node_idx = 0
+        uint32_t node_idx = 0
         X_DTYPE_C data_val
 
     while True:
@@ -89,12 +89,12 @@ def _predict_from_binned_data(
         node_struct [:] nodes,
         const X_BINNED_DTYPE_C [:, :] binned_data,
         BITSET_INNER_DTYPE_C [:, :] binned_left_cat_bitsets,
-        const unsigned char missing_values_bin_idx,
-        int n_threads,
+        const uint8_t missing_values_bin_idx,
+        inpt_t n_threads,
         Y_DTYPE_C [:] out):
 
     cdef:
-        int i
+        inpt_t i
 
     for i in prange(binned_data.shape[0], schedule='static', nogil=True,
                     num_threads=n_threads):
@@ -108,14 +108,14 @@ cdef inline Y_DTYPE_C _predict_one_from_binned_data(
         node_struct [:] nodes,
         const X_BINNED_DTYPE_C [:, :] binned_data,
         const BITSET_INNER_DTYPE_C [:, :] binned_left_cat_bitsets,
-        const int row,
-        const unsigned char missing_values_bin_idx) noexcept nogil:
+        const inpt_t row,
+        const uint8_t missing_values_bin_idx) noexcept nogil:
     # Need to pass the whole array and the row index, else prange won't work.
     # See issue Cython #2798
 
     cdef:
         node_struct node = nodes[0]
-        unsigned int node_idx = 0
+        uint32_t node_idx = 0
         X_BINNED_DTYPE_C data_val
 
     while True:
@@ -182,14 +182,14 @@ def _compute_partial_dependence(
     """
 
     cdef:
-        unsigned int current_node_idx
-        unsigned int [:] node_idx_stack = np.zeros(shape=nodes.shape[0],
+        uint32_t current_node_idx
+        uint32_t [:] node_idx_stack = np.zeros(shape=nodes.shape[0],
                                                    dtype=np.uint32)
         Y_DTYPE_C [::1] weight_stack = np.zeros(shape=nodes.shape[0],
                                                 dtype=Y_DTYPE)
         node_struct * current_node  # pointer to avoid copying attributes
 
-        unsigned int sample_idx
+        uint32_t sample_idx
         intp_t feature_idx
         unsigned stack_size
         Y_DTYPE_C left_sample_frac
