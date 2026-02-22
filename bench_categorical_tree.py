@@ -79,7 +79,6 @@ def run_benchmark(
     # Apply one-hot encoding if requested
     if mode == "onehot":
         ohe = OneHotEncoder(sparse_output=False, categories="auto")
-        X_cat = ohe.fit_transform(X_cat)
         use_categorical = False
     elif mode == "categorical":
         use_categorical = True
@@ -96,6 +95,9 @@ def run_benchmark(
         base_kwargs["n_jobs"] = -1
 
     for repeat_fold, (train_idx, test_idx) in enumerate(rkf.split(X_cat)):
+        if mode == 'onehot':
+            X_cat = ohe.fit_transform(X_cat)
+
         repeat = repeat_fold // k_folds
         fold = repeat_fold % k_folds
 
