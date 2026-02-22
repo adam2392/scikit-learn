@@ -1012,7 +1012,7 @@ class DecisionTreeClassifier(ClassifierMixin, BaseDecisionTree):
         Categorical features cannot have non-zero monotonic constraint.
 
         When these constraints are not met, ``fit`` will raise an error.
-        
+
         .. versionadded:: 1.9
 
     Attributes
