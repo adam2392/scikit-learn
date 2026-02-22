@@ -6,9 +6,12 @@ Usage:
 """
 import argparse
 
+import seaborn as sns
 import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
+
+sns.set_context('paper', font_scale=1.2)
 
 
 def load_and_concat(files):
@@ -26,7 +29,15 @@ def _boxplot_by_label(ax, df, column, ylabel, title):
             positions=[idx],
             widths=0.4,
             patch_artist=True,
+            showmeans=True,
             boxprops=dict(facecolor=f"C{idx}"),
+            medianprops=dict(color="black", linewidth=1.2),
+            meanprops=dict(
+                marker="D",
+                markerfacecolor="white",
+                markeredgecolor="black",
+                markersize=5,
+            ),
         )
     ax.set_xticks(range(len(labels)))
     ax.set_xticklabels(labels)

@@ -33,24 +33,36 @@ MODELS = {
 MAX_CAT_VALUES = 64  # max distinct category values per feature
 
 
-def encode_rare_categories(X_cat, cat_features, max_categories=MAX_CAT_VALUES):
-    """Remap each categorical feature to have at most max_categories values.
+def encode_rare_categories(
+    X_cat, cat_features, max_categories=MAX_CAT_VALUES, random_state=0
+):
+    """Remap each categorical feature to randomized integer codes.
 
-    Keeps the (max_categories - 1) most frequent categories remapped to
-    0..max_categories-2, and maps all remaining rare categories to
-    max_categories - 1.
+    Each feature is encoded into integers in ``[0, max_categories - 1]``.
+    If a feature has more than ``max_categories`` distinct values, keep the
+    ``max_categories - 1`` most frequent categories and merge the remaining
+    rare categories into a single bucket before assigning randomized codes.
     """
     X_out = X_cat.copy()
+    rng = np.random.RandomState(random_state)
     for col in cat_features:
         vals = X_out[:, col].astype(int)
         unique, counts = np.unique(vals, return_counts=True)
         order = np.argsort(-counts)
-        top = unique[order[: max_categories - 1]]
-        mapping = {v: i for i, v in enumerate(top)}
-        rare_code = max_categories - 1
-        X_out[:, col] = np.array(
-            [mapping.get(v, rare_code) for v in vals], dtype=np.float64
-        )
+
+        if unique.size > max_categories:
+            kept = unique[order[: max_categories - 1]]
+            categories_to_encode = kept.tolist() + ["__RARE__"]
+            kept_set = set(kept.tolist())
+            encoded_labels = [v if v in kept_set else "__RARE__" for v in vals]
+        else:
+            categories_to_encode = unique.tolist()
+            encoded_labels = vals
+
+        # Randomized code assignment removes any signal from original/frequency order.
+        code_pool = rng.permutation(max_categories)[: len(categories_to_encode)]
+        mapping = dict(zip(categories_to_encode, code_pool.tolist()))
+        X_out[:, col] = np.array([mapping[v] for v in encoded_labels], dtype=np.float64)
     return X_out
 
 
@@ -89,7 +101,9 @@ def run_benchmark(
     rkf = RepeatedKFold(n_splits=k_folds, n_repeats=n_repeats, random_state=42)
 
     # Base kwargs shared by both models
-    base_kwargs = {"random_state": 42, "max_features": None}
+    base_kwargs = {"random_state": 42, 
+                #    "max_features": None
+                   }
     if model_name == "forest":
         base_kwargs["n_estimators"] = 100
         base_kwargs["n_jobs"] = -1
