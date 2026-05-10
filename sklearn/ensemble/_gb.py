@@ -26,7 +26,7 @@ from numbers import Integral, Real
 from time import time
 
 import numpy as np
-from scipy.sparse import csc_matrix, csr_matrix, issparse
+from scipy.sparse import csc_array, csr_array, issparse
 
 from sklearn._loss.loss import (
     _LOSSES,
@@ -378,6 +378,7 @@ class BaseGradientBoosting(BaseEnsemble, metaclass=ABCMeta):
     }
     _parameter_constraints.pop("splitter")
     _parameter_constraints.pop("monotonic_cst")
+    _parameter_constraints.pop("categorical_features")
 
     @abstractmethod
     def __init__(
@@ -631,7 +632,7 @@ class BaseGradientBoosting(BaseEnsemble, metaclass=ABCMeta):
         X : {array-like, sparse matrix} of shape (n_samples, n_features)
             The input samples. Internally, it will be converted to
             ``dtype=np.float32`` and if a sparse matrix is provided
-            to a sparse ``csr_matrix``.
+            to a sparse ``csr_array``.
 
         y : array-like of shape (n_samples,)
             Target values (strings or integers in classification, real numbers
@@ -857,8 +858,8 @@ class BaseGradientBoosting(BaseEnsemble, metaclass=ABCMeta):
             verbose_reporter = VerboseReporter(verbose=self.verbose)
             verbose_reporter.init(self, begin_at_stage)
 
-        X_csc = csc_matrix(X) if issparse(X) else None
-        X_csr = csr_matrix(X) if issparse(X) else None
+        X_csc = csc_array(X) if issparse(X) else None
+        X_csr = csr_array(X) if issparse(X) else None
 
         if self.n_iter_no_change is not None:
             loss_history = np.full(self.n_iter_no_change, np.inf)
@@ -996,7 +997,7 @@ class BaseGradientBoosting(BaseEnsemble, metaclass=ABCMeta):
         X : {array-like, sparse matrix} of shape (n_samples, n_features)
             The input samples. Internally, it will be converted to
             ``dtype=np.float32`` and if a sparse matrix is provided
-            to a sparse ``csr_matrix``.
+            to a sparse ``csr_array``.
 
         check_input : bool, default=True
             If False, the input arrays X will not be checked.
@@ -1111,7 +1112,7 @@ class BaseGradientBoosting(BaseEnsemble, metaclass=ABCMeta):
         X : {array-like, sparse matrix} of shape (n_samples, n_features)
             The input samples. Internally, its dtype will be converted to
             ``dtype=np.float32``. If a sparse matrix is provided, it will
-            be converted to a sparse ``csr_matrix``.
+            be converted to a sparse ``csr_array``.
 
         Returns
         -------
@@ -1584,7 +1585,7 @@ class GradientBoostingClassifier(ClassifierMixin, BaseGradientBoosting):
         X : {array-like, sparse matrix} of shape (n_samples, n_features)
             The input samples. Internally, it will be converted to
             ``dtype=np.float32`` and if a sparse matrix is provided
-            to a sparse ``csr_matrix``.
+            to a sparse ``csr_array``.
 
         Returns
         -------
@@ -1614,7 +1615,7 @@ class GradientBoostingClassifier(ClassifierMixin, BaseGradientBoosting):
         X : {array-like, sparse matrix} of shape (n_samples, n_features)
             The input samples. Internally, it will be converted to
             ``dtype=np.float32`` and if a sparse matrix is provided
-            to a sparse ``csr_matrix``.
+            to a sparse ``csr_array``.
 
         Yields
         ------
@@ -1635,7 +1636,7 @@ class GradientBoostingClassifier(ClassifierMixin, BaseGradientBoosting):
         X : {array-like, sparse matrix} of shape (n_samples, n_features)
             The input samples. Internally, it will be converted to
             ``dtype=np.float32`` and if a sparse matrix is provided
-            to a sparse ``csr_matrix``.
+            to a sparse ``csr_array``.
 
         Returns
         -------
@@ -1660,7 +1661,7 @@ class GradientBoostingClassifier(ClassifierMixin, BaseGradientBoosting):
         X : {array-like, sparse matrix} of shape (n_samples, n_features)
             The input samples. Internally, it will be converted to
             ``dtype=np.float32`` and if a sparse matrix is provided
-            to a sparse ``csr_matrix``.
+            to a sparse ``csr_array``.
 
         Yields
         ------
@@ -1684,7 +1685,7 @@ class GradientBoostingClassifier(ClassifierMixin, BaseGradientBoosting):
         X : {array-like, sparse matrix} of shape (n_samples, n_features)
             The input samples. Internally, it will be converted to
             ``dtype=np.float32`` and if a sparse matrix is provided
-            to a sparse ``csr_matrix``.
+            to a sparse ``csr_array``.
 
         Returns
         -------
@@ -1708,7 +1709,7 @@ class GradientBoostingClassifier(ClassifierMixin, BaseGradientBoosting):
         X : {array-like, sparse matrix} of shape (n_samples, n_features)
             The input samples. Internally, it will be converted to
             ``dtype=np.float32`` and if a sparse matrix is provided
-            to a sparse ``csr_matrix``.
+            to a sparse ``csr_array``.
 
         Returns
         -------
@@ -1735,7 +1736,7 @@ class GradientBoostingClassifier(ClassifierMixin, BaseGradientBoosting):
         X : {array-like, sparse matrix} of shape (n_samples, n_features)
             The input samples. Internally, it will be converted to
             ``dtype=np.float32`` and if a sparse matrix is provided
-            to a sparse ``csr_matrix``.
+            to a sparse ``csr_array``.
 
         Yields
         ------
@@ -2155,7 +2156,7 @@ class GradientBoostingRegressor(RegressorMixin, BaseGradientBoosting):
         X : {array-like, sparse matrix} of shape (n_samples, n_features)
             The input samples. Internally, it will be converted to
             ``dtype=np.float32`` and if a sparse matrix is provided
-            to a sparse ``csr_matrix``.
+            to a sparse ``csr_array``.
 
         Returns
         -------
@@ -2179,7 +2180,7 @@ class GradientBoostingRegressor(RegressorMixin, BaseGradientBoosting):
         X : {array-like, sparse matrix} of shape (n_samples, n_features)
             The input samples. Internally, it will be converted to
             ``dtype=np.float32`` and if a sparse matrix is provided
-            to a sparse ``csr_matrix``.
+            to a sparse ``csr_array``.
 
         Yields
         ------
@@ -2199,7 +2200,7 @@ class GradientBoostingRegressor(RegressorMixin, BaseGradientBoosting):
         X : {array-like, sparse matrix} of shape (n_samples, n_features)
             The input samples. Internally, its dtype will be converted to
             ``dtype=np.float32``. If a sparse matrix is provided, it will
-            be converted to a sparse ``csr_matrix``.
+            be converted to a sparse ``csr_array``.
 
         Returns
         -------
