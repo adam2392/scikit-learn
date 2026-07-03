@@ -25,7 +25,8 @@ from sklearn.base import (
     clone,
     is_classifier,
 )
-from sklearn.preprocessing import OrdinalEncoder
+from sklearn.compose import ColumnTransformer
+from sklearn.preprocessing import FunctionTransformer, OrdinalEncoder
 from sklearn.tree import _criterion, _splitter  # type: ignore[attr-defined]
 from sklearn.tree._criterion import Criterion
 from sklearn.tree._tree import MAX_NUM_CATEGORIES_PY as MAX_NUM_CATEGORIES
@@ -38,7 +39,6 @@ from sklearn.tree._tree import (
 )
 from sklearn.utils import (
     Bunch,
-    _safe_indexing,
     check_random_state,
     compute_sample_weight,
     metadata_routing,
@@ -265,6 +265,7 @@ class BaseDecisionTree(MultiOutputMixin, BaseEstimator, metaclass=ABCMeta):
             X = self._transform_categorical_features(X)
         else:
             self._categorical_encoder = None
+            self._categorical_preprocessor = None
 
         if check_input:
             # Need to validate separately here.
@@ -575,40 +576,56 @@ class BaseDecisionTree(MultiOutputMixin, BaseEstimator, metaclass=ABCMeta):
         return self
 
     def _fit_categorical_features(self, X):
-        """Fit the categorical feature encoder on selected columns.
+        """Fit the categorical feature preprocessor.
 
-        The encoder sees the original container so dataframe-backed categorical
-        dtypes and string/object values are preserved until encoding.
+        The preprocessor sees the original container so dataframe-backed
+        categorical dtypes and string/object values are preserved until
+        encoding.
         """
-        X_categorical = _safe_indexing(X, self.is_categorical_, axis=1)
-        self._categorical_encoder = OrdinalEncoder(
+        categorical_encoder = OrdinalEncoder(
             dtype=np.float32,  # trees require X to be float32
             categories="auto",
             handle_unknown="use_encoded_value",
             unknown_value=np.nan,
             encoded_missing_value=np.nan,
         )
-        self._categorical_encoder.fit(X_categorical)
-
-    def _transform_categorical_features(self, X):
-        # _safe_indexing(..., axis=1) does not support Python sequence containers.
-        # Convert them to an object array while preserving dataframe-like inputs.
-        if isinstance(X, (list, tuple)):
-            X = np.asarray(X, dtype=object)
-        X_categorical = _safe_indexing(X, self.is_categorical_, axis=1)
-        X_categorical = self._categorical_encoder.transform(X_categorical)
-
-        # replace features with the encoded categorical values
-        X_out = np.empty(X.shape, dtype=np.float32)
-        X_out[:, self.is_categorical_] = X_categorical
+        transformers = [
+            ("categorical", categorical_encoder, self.is_categorical_),
+        ]
 
         is_numerical = ~self.is_categorical_
         if np.any(is_numerical):
-            X_numerical = _safe_indexing(X, is_numerical, axis=1)
-            X_numerical = check_array(
-                X_numerical, dtype=np.float32, ensure_all_finite=False
+            numerical_transformer = FunctionTransformer(
+                check_array,
+                kw_args={"dtype": np.float32, "ensure_all_finite": False},
             )
-            X_out[:, is_numerical] = X_numerical
+            transformers.append(("numerical", numerical_transformer, is_numerical))
+
+        self._categorical_preprocessor = ColumnTransformer(
+            transformers,
+            sparse_threshold=0,
+        )
+        self._categorical_preprocessor.set_output(transform="default")
+        self._categorical_preprocessor.fit(X)
+        self._categorical_encoder = self._categorical_preprocessor.named_transformers_[
+            "categorical"
+        ]
+
+    def _transform_categorical_features(self, X):
+        X_transformed = self._categorical_preprocessor.transform(X)
+        X_transformed = check_array(
+            X_transformed, dtype=np.float32, ensure_all_finite=False
+        )
+
+        # ColumnTransformer emits categorical columns first. Restore the original
+        # feature order so tree feature indices keep their public meaning.
+        X_out = np.empty_like(X_transformed, dtype=np.float32)
+        n_categorical = np.count_nonzero(self.is_categorical_)
+        X_out[:, self.is_categorical_] = X_transformed[:, :n_categorical]
+
+        is_numerical = ~self.is_categorical_
+        if np.any(is_numerical):
+            X_out[:, is_numerical] = X_transformed[:, n_categorical:]
 
         return X_out
 
