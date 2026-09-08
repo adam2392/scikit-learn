@@ -1936,31 +1936,24 @@ def test_friedman_mse_deprecation(Forest):
 
 
 @pytest.mark.parametrize("name", FOREST_CLASSIFIERS_REGRESSORS)
-@pytest.mark.parametrize(
-    "X, raw_categories",
-    [
-        (
-            np.array([["a"], ["a"], ["b"], ["b"]], dtype=object),
-            np.array(["a", "b"], dtype=object),
-        ),
-    ],
-)
-def test_fit_categorical_raw_labels_are_reencoded(name, X, raw_categories):
-    """Check raw categorical labels are re-encoded for fitting and prediction."""
+def test_fit_categorical_raw_labels_are_reencoded(name):
+    """Forest encodes raw labels once and forwards the mask to base trees."""
     Forest = FOREST_CLASSIFIERS_REGRESSORS[name]
+    X = np.array([["a"], ["a"], ["b"], ["b"]], dtype=object)
     y = np.array([0, 0, 1, 1])
     est = Forest(categorical_features=[0], n_estimators=5, random_state=0).fit(X, y)
 
     assert_array_equal(est.is_categorical_, [True])
-    assert_array_equal(est._categorical_encoder.categories_[0], raw_categories)
-    assert_array_equal(est._categorical_encoder.transform(X).ravel(), [0, 0, 1, 1])
+    assert_array_equal(est._categorical_encoder.categories_[0], ["a", "b"])
+    assert_array_equal(est.estimators_[0].is_categorical_, [True])
     assert_array_equal(est.predict(X), y)
 
 
 @pytest.mark.parametrize("name", FOREST_CLASSIFIERS_REGRESSORS)
 def test_no_sparse_with_categorical(name):
+    """Sparse matrices are rejected at fit and at predict when categoricals are used."""
     rng = np.random.RandomState(0)
-    n_samples, n_features = 50, 5
+    n_samples = 50
     X = np.hstack(
         [
             rng.randn(n_samples, 3),
@@ -1969,7 +1962,6 @@ def test_no_sparse_with_categorical(name):
     )
     y = rng.randint(0, 2, size=n_samples)
     X_sparse = scipy.sparse.csc_array(X)
-
     Forest = FOREST_CLASSIFIERS_REGRESSORS[name]
 
     with pytest.raises(
@@ -1987,27 +1979,23 @@ def test_no_sparse_with_categorical(name):
         ).predict(X_sparse)
 
 
-@pytest.mark.parametrize("name", FOREST_CLASSIFIERS)
-@pytest.mark.parametrize(
-    "X, X_missing",
-    [
-        (
-            np.array([["a"], ["a"], ["b"], ["b"], [np.nan], [np.nan]], dtype=object),
-            np.array([[np.nan]], dtype=object),
-        ),
-    ],
-)
-def test_fit_categorical_missing_values(name, X, X_missing):
+@pytest.mark.parametrize("name", FOREST_CLASSIFIERS_REGRESSORS)
+def test_fit_categorical_missing_and_unknown_values(name):
+    """Missing and unseen categories share the same prediction path."""
     Forest = FOREST_CLASSIFIERS_REGRESSORS[name]
+    X = np.array([["a"], ["a"], ["b"], ["b"], [np.nan], [np.nan]], dtype=object)
     y = np.array([0, 0, 0, 0, 1, 1])
     est = Forest(
         categorical_features=[0], max_depth=2, n_estimators=5, random_state=0
     ).fit(X, y)
 
     non_missing_prediction = est.predict(X[:1])
-    missing_prediction = est.predict(X_missing)
+    missing_prediction = est.predict(np.array([[np.nan]], dtype=object))
+    unknown_prediction = est.predict(np.array([["c"]], dtype=object))
+
     assert_array_equal(non_missing_prediction, [0])
     assert missing_prediction[0] != non_missing_prediction[0]
+    assert_array_equal(unknown_prediction, missing_prediction)
 
 
 @pytest.mark.parametrize("name", FOREST_CLASSIFIERS_REGRESSORS)
@@ -2021,28 +2009,17 @@ def test_fit_categorical_missing_values(name, X, X_missing):
     ],
 )
 def test_invalid_categorical(name, categorical_features, match):
+    """Forest fit surfaces invalid categorical_features the same way trees do."""
     Forest = FOREST_CLASSIFIERS_REGRESSORS[name]
-    X_array = np.asarray(X)
     with pytest.raises(ValueError, match=match):
         Forest(categorical_features=categorical_features, random_state=0).fit(
-            X_array, y
+            np.asarray(X), y
         )
 
 
-@pytest.mark.parametrize("name", FOREST_CLASSIFIERS_REGRESSORS)
-def test_categorical_features_passed_to_estimators(name):
-    Forest = FOREST_CLASSIFIERS_REGRESSORS[name]
-    X_cat = np.array([["a"], ["b"], ["a"], ["b"]], dtype=object)
-    y_cat = np.array([0, 1, 0, 1])
-    est = Forest(categorical_features=[0], n_estimators=3, random_state=0).fit(
-        X_cat, y_cat
-    )
-
-    assert_array_equal(est.is_categorical_, [True])
-    assert_array_equal(est.estimators_[0].is_categorical_, [True])
-
-
-def test_categorical_absolute_error_unsupported():
+@pytest.mark.parametrize("Forest", [RandomForestRegressor, ExtraTreesRegressor])
+def test_categorical_absolute_error_unsupported(Forest):
+    """absolute_error categorical splits are rejected (same limit as trees)."""
     X = np.array([[0.0], [1.0], [0.0], [1.0]], dtype=np.float64)
     y = np.array([0.0, 1.0, 0.0, 1.0])
 
@@ -2050,22 +2027,27 @@ def test_categorical_absolute_error_unsupported():
         ValueError,
         match="Categorical features are not supported with criterion='absolute_error'",
     ):
-        RandomForestRegressor(
+        Forest(
             categorical_features=[0], criterion="absolute_error", random_state=0
         ).fit(X, y)
 
 
-@pytest.mark.parametrize(
-    "Forest",
-    [ExtraTreesClassifier, ExtraTreesRegressor],
-)
+@pytest.mark.parametrize("Forest", [ExtraTreesClassifier, ExtraTreesRegressor])
 def test_extratrees_high_cardinality_categorical(Forest):
-    rng = np.random.RandomState(0)
-    n_samples = 100
-    categories = np.arange(300, dtype=np.int32)
-    X = rng.choice(categories, size=n_samples).reshape(-1, 1)
-    y = rng.randint(0, 2, size=n_samples)
+    """ExtraTrees accept >255 categories; RandomForest best-splits do not."""
+    # Include every level so cardinality is deterministic (>255), not sampled.
+    n_categories = 500
+    X = np.arange(n_categories).reshape(-1, 1)
+    y = X[:, 0] % 2
 
-    est = Forest(categorical_features=[0], n_estimators=5, random_state=0)
-    est.fit(X, y)
-    assert est.predict(X[:5]).shape == (5,)
+    Forest(categorical_features=[0], n_estimators=5, random_state=0).fit(X, y)
+
+    RF = (
+        RandomForestClassifier
+        if issubclass(Forest, ExtraTreesClassifier)
+        else RandomForestRegressor
+    )
+    with pytest.raises(
+        ValueError, match=r"Values for categorical features.*\[0, 255\]"
+    ):
+        RF(categorical_features=[0], n_estimators=5, random_state=0).fit(X, y)
