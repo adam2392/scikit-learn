@@ -64,7 +64,6 @@ from sklearn.tree import (
     ExtraTreeClassifier,
     ExtraTreeRegressor,
 )
-from sklearn.tree._tree import DOUBLE, DTYPE
 from sklearn.utils import (
     check_random_state,
     compute_class_weight,
@@ -75,9 +74,12 @@ from sklearn.utils._tags import get_tags
 from sklearn.utils.multiclass import check_classification_targets, type_of_target
 from sklearn.utils.parallel import Parallel, delayed
 from sklearn.utils.validation import (
+    _check_categorical_features,
     _check_feature_names_in,
+    _check_n_features,
     _check_sample_weight,
     _num_samples,
+    check_array,
     check_is_fitted,
     validate_data,
 )
@@ -332,15 +334,51 @@ class BaseForest(MultiOutputMixin, BaseEnsemble, metaclass=ABCMeta):
         if issparse(y):
             raise ValueError("sparse multilabel-indicator for y is not supported.")
 
-        X, y = validate_data(
-            self,
-            X,
-            y,
-            multi_output=True,
-            accept_sparse="csc",
-            dtype=DTYPE,
-            ensure_all_finite=False,
-        )
+        categorical_features = getattr(self, "categorical_features", None)
+        self.is_categorical_ = _check_categorical_features(X, categorical_features)
+        has_categorical = self.is_categorical_ is not None
+
+        if has_categorical:
+            if issparse(X):
+                raise NotImplementedError(
+                    "Categorical features not supported with sparse inputs"
+                )
+            # Capture feature names on the original dataframe-like input before
+            # categorical encoding converts X to a NumPy array.
+            validate_data(
+                self,
+                X,
+                y,
+                multi_output=True,
+                reset=True,
+                skip_check_array=True,
+            )
+            X = self._preprocess_X(X, reset=True)
+            # X has already been encoded to a numeric array. Do not call
+            # validate_data(reset=True) again here because ndarray input would
+            # remove feature_names_in_ captured from the original container.
+            X, y = validate_data(
+                self,
+                X,
+                y,
+                multi_output=True,
+                accept_sparse="csc",
+                dtype=np.float32,
+                ensure_all_finite=False,
+                reset=False,
+            )
+        else:
+            self._categorical_encoder = None
+            self._preprocessor = None
+            X, y = validate_data(
+                self,
+                X,
+                y,
+                multi_output=True,
+                accept_sparse="csc",
+                dtype=np.float32,
+                ensure_all_finite=False,
+            )
         # _compute_missing_values_in_feature_mask checks if X has missing values and
         # will raise an error if the underlying tree base estimator can't handle missing
         # values. Only the criterion is required to determine if the tree supports
@@ -393,8 +431,8 @@ class BaseForest(MultiOutputMixin, BaseEnsemble, metaclass=ABCMeta):
 
         y, expanded_class_weight = self._validate_y_class_weight(y, sample_weight)
 
-        if getattr(y, "dtype", None) != DOUBLE or not y.flags.contiguous:
-            y = np.ascontiguousarray(y, dtype=DOUBLE)
+        if getattr(y, "dtype", None) != np.float64 or not y.flags.contiguous:
+            y = np.ascontiguousarray(y, dtype=np.float64)
 
         # Combined _sample_weight = sample_weight * expanded_class_weight
         # (when provided) used in _parallel_build_trees to draw indices
@@ -604,6 +642,15 @@ class BaseForest(MultiOutputMixin, BaseEnsemble, metaclass=ABCMeta):
         # Default implementation
         return y, None
 
+    def _preprocess_X(self, X, *, reset):
+        """Encode categorical features and cast numerical features to float32.
+
+        Reuses the tree implementation so forests stay aligned with
+        :class:`~sklearn.tree.DecisionTreeClassifier` /
+        :class:`~sklearn.tree.DecisionTreeRegressor` preprocessing.
+        """
+        return BaseDecisionTree._preprocess_X(self, X, reset=reset)
+
     def _validate_X_predict(self, X):
         """
         Validate X whenever one tries to predict, apply, predict_proba."""
@@ -613,14 +660,34 @@ class BaseForest(MultiOutputMixin, BaseEnsemble, metaclass=ABCMeta):
         else:
             ensure_all_finite = True
 
-        X = validate_data(
-            self,
-            X,
-            dtype=DTYPE,
-            accept_sparse="csr",
-            reset=False,
-            ensure_all_finite=ensure_all_finite,
-        )
+        has_categorical = self.is_categorical_ is not None
+        if has_categorical:
+            if issparse(X):
+                raise NotImplementedError(
+                    "Categorical features not supported with sparse inputs"
+                )
+            # Check feature names on the original input before categorical
+            # encoding converts it to a NumPy array and drops dataframe metadata.
+            validate_data(self, X, reset=False, skip_check_array=True)
+            X = self._preprocess_X(X, reset=False)
+            X = check_array(
+                X,
+                input_name="X",
+                estimator=self,
+                dtype=np.float32,
+                accept_sparse="csr",
+                ensure_all_finite=ensure_all_finite,
+            )
+            _check_n_features(self, X, reset=False)
+        else:
+            X = validate_data(
+                self,
+                X,
+                dtype=np.float32,
+                accept_sparse="csr",
+                reset=False,
+                ensure_all_finite=ensure_all_finite,
+            )
         if issparse(X) and (X.indices.dtype != np.intc or X.indptr.dtype != np.intc):
             raise ValueError("No support for np.int64 index based sparse matrices")
         return X
@@ -1137,7 +1204,7 @@ class ForestRegressor(RegressorMixin, BaseForest, metaclass=ABCMeta):
 
         Parameters
         ----------
-        grid : ndarray of shape (n_samples, n_target_features), dtype=DTYPE
+        grid : ndarray of shape (n_samples, n_target_features), dtype=np.float32
             The grid points on which the partial dependence should be
             evaluated.
         target_features : ndarray of shape (n_target_features), dtype=np.intp
@@ -1149,7 +1216,7 @@ class ForestRegressor(RegressorMixin, BaseForest, metaclass=ABCMeta):
         averaged_predictions : ndarray of shape (n_samples,)
             The value of the partial dependence function on each grid point.
         """
-        grid = np.asarray(grid, dtype=DTYPE, order="C")
+        grid = np.asarray(grid, dtype=np.float32, order="C")
         target_features = np.asarray(target_features, dtype=np.intp, order="C")
         averaged_predictions = np.zeros(
             shape=grid.shape[0], dtype=np.float64, order="C"
@@ -1377,24 +1444,49 @@ class RandomForestClassifier(ForestClassifier):
             Float `max_samples` is relative to `sample_weight.sum()` instead of
             `X.shape[0]` for weighted samples.
 
-    monotonic_cst : array-like of int of shape (n_features), default=None
+    monotonic_cst : array-like of int of shape (n_features,), default=None
         Indicates the monotonicity constraint to enforce on each feature.
-          - 1: monotonic increase
+          - 1: monotonically increasing
           - 0: no constraint
-          - -1: monotonic decrease
+          - -1: monotonically decreasing
 
         If monotonic_cst is None, no constraints are applied.
 
         Monotonicity constraints are not supported for:
           - multiclass classifications (i.e. when `n_classes > 2`),
-          - multioutput classifications (i.e. when `n_outputs_ > 1`),
-          - classifications trained on data with missing values.
+          - multioutput classifications (i.e. when `n_outputs_ > 1`).
 
         The constraints hold over the probability of the positive class.
 
         Read more in the :ref:`User Guide <monotonic_cst_gbdt>`.
 
         .. versionadded:: 1.4
+
+    categorical_features : array-like of {bool, int, str} of shape (n_features,) or \
+        (n_categorical_features,), or "from_dtype", default=None
+        Indicates which features are treated as categorical.
+
+        - None : no feature will be considered categorical.
+        - boolean array-like : boolean mask indicating categorical features.
+        - integer array-like : integer indices indicating categorical
+          features.
+        - str array-like: names of categorical features (assuming the training
+          data has feature names).
+        - `"from_dtype"`: dataframe columns with dtype "Categorical" and "Enum" are
+          considered to be categorical features. The input must be a dataframe that
+          is supported by narwhals (or supports it): :func:`narwhals.from_native` must
+          work. This is the case, for instance, for pandas and polars DataFrames.
+
+        For each categorical feature, there must be at most 255 unique
+        categories. Missing values for categorical features should be
+        represented by ``np.nan``; unknown categories at prediction time are
+        also treated as missing values.
+
+        Trees in the forest use the best split strategy, so categorical
+        features are only supported for binary classification and
+        single-output regression.
+
+        .. versionadded:: 1.11
 
     Attributes
     ----------
@@ -1420,6 +1512,12 @@ class RandomForestClassifier(ForestClassifier):
         Number of features seen during :term:`fit`.
 
         .. versionadded:: 0.24
+
+    is_categorical_ : ndarray of shape (n_features,) or None
+        Boolean mask indicating which features are treated as categorical.
+        ``None`` if no categorical features are used.
+
+        .. versionadded:: 1.11
 
     feature_names_in_ : ndarray of shape (`n_features_in_`,)
         Names of features seen during :term:`fit`. Defined only when `X`
@@ -1536,6 +1634,7 @@ class RandomForestClassifier(ForestClassifier):
         ccp_alpha=0.0,
         max_samples=None,
         monotonic_cst=None,
+        categorical_features=None,
     ):
         super().__init__(
             estimator=DecisionTreeClassifier(),
@@ -1552,6 +1651,7 @@ class RandomForestClassifier(ForestClassifier):
                 "random_state",
                 "ccp_alpha",
                 "monotonic_cst",
+                "categorical_features",
             ),
             bootstrap=bootstrap,
             oob_score=oob_score,
@@ -1573,6 +1673,7 @@ class RandomForestClassifier(ForestClassifier):
         self.min_impurity_decrease = min_impurity_decrease
         self.monotonic_cst = monotonic_cst
         self.ccp_alpha = ccp_alpha
+        self.categorical_features = categorical_features
 
 
 class RandomForestRegressor(ForestRegressor):
@@ -1770,7 +1871,7 @@ class RandomForestRegressor(ForestRegressor):
             Float `max_samples` is relative to `sample_weight.sum()` instead of
             `X.shape[0]` for weighted samples.
 
-    monotonic_cst : array-like of int of shape (n_features), default=None
+    monotonic_cst : array-like of int of shape (n_features,), default=None
         Indicates the monotonicity constraint to enforce on each feature.
           - 1: monotonically increasing
           - 0: no constraint
@@ -1779,12 +1880,37 @@ class RandomForestRegressor(ForestRegressor):
         If monotonic_cst is None, no constraints are applied.
 
         Monotonicity constraints are not supported for:
-          - multioutput regressions (i.e. when `n_outputs_ > 1`),
-          - regressions trained on data with missing values.
+          - multioutput regressions (i.e. when `n_outputs_ > 1`).
 
         Read more in the :ref:`User Guide <monotonic_cst_gbdt>`.
 
         .. versionadded:: 1.4
+
+    categorical_features : array-like of {bool, int, str} of shape (n_features,) or \
+        (n_categorical_features,), or "from_dtype", default=None
+        Indicates which features are treated as categorical.
+
+        - None : no feature will be considered categorical.
+        - boolean array-like : boolean mask indicating categorical features.
+        - integer array-like : integer indices indicating categorical
+          features.
+        - str array-like: names of categorical features (assuming the training
+          data has feature names).
+        - `"from_dtype"`: dataframe columns with dtype "Categorical" and "Enum" are
+          considered to be categorical features. The input must be a dataframe that
+          is supported by narwhals (or supports it): :func:`narwhals.from_native` must
+          work. This is the case, for instance, for pandas and polars DataFrames.
+
+        For each categorical feature, there must be at most 255 unique
+        categories. Missing values for categorical features should be
+        represented by ``np.nan``; unknown categories at prediction time are
+        also treated as missing values.
+
+        Trees in the forest use the best split strategy, so categorical
+        features are only supported for binary classification and
+        single-output regression.
+
+        .. versionadded:: 1.11
 
     Attributes
     ----------
@@ -1913,6 +2039,7 @@ class RandomForestRegressor(ForestRegressor):
         ccp_alpha=0.0,
         max_samples=None,
         monotonic_cst=None,
+        categorical_features=None,
     ):
         super().__init__(
             estimator=DecisionTreeRegressor(),
@@ -1929,6 +2056,7 @@ class RandomForestRegressor(ForestRegressor):
                 "random_state",
                 "ccp_alpha",
                 "monotonic_cst",
+                "categorical_features",
             ),
             bootstrap=bootstrap,
             oob_score=oob_score,
@@ -1959,6 +2087,7 @@ class RandomForestRegressor(ForestRegressor):
         self.min_impurity_decrease = min_impurity_decrease
         self.ccp_alpha = ccp_alpha
         self.monotonic_cst = monotonic_cst
+        self.categorical_features = categorical_features
 
 
 class ExtraTreesClassifier(ForestClassifier):
@@ -2164,7 +2293,7 @@ class ExtraTreesClassifier(ForestClassifier):
             Float `max_samples` is relative to `sample_weight.sum()` instead of
             `X.shape[0]` for weighted samples.
 
-    monotonic_cst : array-like of int of shape (n_features), default=None
+    monotonic_cst : array-like of int of shape (n_features,), default=None
         Indicates the monotonicity constraint to enforce on each feature.
           - 1: monotonically increasing
           - 0: no constraint
@@ -2174,14 +2303,38 @@ class ExtraTreesClassifier(ForestClassifier):
 
         Monotonicity constraints are not supported for:
           - multiclass classifications (i.e. when `n_classes > 2`),
-          - multioutput classifications (i.e. when `n_outputs_ > 1`),
-          - classifications trained on data with missing values.
+          - multioutput classifications (i.e. when `n_outputs_ > 1`).
 
         The constraints hold over the probability of the positive class.
 
         Read more in the :ref:`User Guide <monotonic_cst_gbdt>`.
 
         .. versionadded:: 1.4
+
+    categorical_features : array-like of {bool, int, str} of shape (n_features,) or \
+        (n_categorical_features,), or "from_dtype", default=None
+        Indicates which features are treated as categorical.
+
+        - None : no feature will be considered categorical.
+        - boolean array-like : boolean mask indicating categorical features.
+        - integer array-like : integer indices indicating categorical
+          features.
+        - str array-like: names of categorical features (assuming the training
+          data has feature names).
+        - `"from_dtype"`: dataframe columns with dtype "Categorical" and "Enum" are
+          considered to be categorical features. The input must be a dataframe that
+          is supported by narwhals (or supports it): :func:`narwhals.from_native` must
+          work. This is the case, for instance, for pandas and polars DataFrames.
+
+        For each categorical feature, about 16 million unique categories are
+        supported. Missing values for categorical features should be represented
+        by ``np.nan``; unknown categories at prediction time are also treated as
+        missing values.
+
+        Trees in the forest use the random split strategy, including multi-class
+        classification and multi-output targets.
+
+        .. versionadded:: 1.11
 
     Attributes
     ----------
@@ -2311,6 +2464,7 @@ class ExtraTreesClassifier(ForestClassifier):
         ccp_alpha=0.0,
         max_samples=None,
         monotonic_cst=None,
+        categorical_features=None,
     ):
         super().__init__(
             estimator=ExtraTreeClassifier(),
@@ -2327,6 +2481,7 @@ class ExtraTreesClassifier(ForestClassifier):
                 "random_state",
                 "ccp_alpha",
                 "monotonic_cst",
+                "categorical_features",
             ),
             bootstrap=bootstrap,
             oob_score=oob_score,
@@ -2348,6 +2503,7 @@ class ExtraTreesClassifier(ForestClassifier):
         self.min_impurity_decrease = min_impurity_decrease
         self.ccp_alpha = ccp_alpha
         self.monotonic_cst = monotonic_cst
+        self.categorical_features = categorical_features
 
 
 class ExtraTreesRegressor(ForestRegressor):
@@ -2540,7 +2696,7 @@ class ExtraTreesRegressor(ForestRegressor):
             Float `max_samples` is relative to `sample_weight.sum()` instead of
             `X.shape[0]` for weighted samples.
 
-    monotonic_cst : array-like of int of shape (n_features), default=None
+    monotonic_cst : array-like of int of shape (n_features,), default=None
         Indicates the monotonicity constraint to enforce on each feature.
           - 1: monotonically increasing
           - 0: no constraint
@@ -2549,12 +2705,36 @@ class ExtraTreesRegressor(ForestRegressor):
         If monotonic_cst is None, no constraints are applied.
 
         Monotonicity constraints are not supported for:
-          - multioutput regressions (i.e. when `n_outputs_ > 1`),
-          - regressions trained on data with missing values.
+          - multioutput regressions (i.e. when `n_outputs_ > 1`).
 
         Read more in the :ref:`User Guide <monotonic_cst_gbdt>`.
 
         .. versionadded:: 1.4
+
+    categorical_features : array-like of {bool, int, str} of shape (n_features,) or \
+        (n_categorical_features,), or "from_dtype", default=None
+        Indicates which features are treated as categorical.
+
+        - None : no feature will be considered categorical.
+        - boolean array-like : boolean mask indicating categorical features.
+        - integer array-like : integer indices indicating categorical
+          features.
+        - str array-like: names of categorical features (assuming the training
+          data has feature names).
+        - `"from_dtype"`: dataframe columns with dtype "Categorical" and "Enum" are
+          considered to be categorical features. The input must be a dataframe that
+          is supported by narwhals (or supports it): :func:`narwhals.from_native` must
+          work. This is the case, for instance, for pandas and polars DataFrames.
+
+        For each categorical feature, about 16 million unique categories are
+        supported. Missing values for categorical features should be represented
+        by ``np.nan``; unknown categories at prediction time are also treated as
+        missing values.
+
+        Trees in the forest use the random split strategy, including multi-class
+        classification and multi-output targets.
+
+        .. versionadded:: 1.11
 
     Attributes
     ----------
@@ -2667,6 +2847,7 @@ class ExtraTreesRegressor(ForestRegressor):
         ccp_alpha=0.0,
         max_samples=None,
         monotonic_cst=None,
+        categorical_features=None,
     ):
         super().__init__(
             estimator=ExtraTreeRegressor(),
@@ -2683,6 +2864,7 @@ class ExtraTreesRegressor(ForestRegressor):
                 "random_state",
                 "ccp_alpha",
                 "monotonic_cst",
+                "categorical_features",
             ),
             bootstrap=bootstrap,
             oob_score=oob_score,
@@ -2713,6 +2895,7 @@ class ExtraTreesRegressor(ForestRegressor):
         self.min_impurity_decrease = min_impurity_decrease
         self.ccp_alpha = ccp_alpha
         self.monotonic_cst = monotonic_cst
+        self.categorical_features = categorical_features
 
 
 class RandomTreesEmbedding(TransformerMixin, BaseForest):
@@ -2908,7 +3091,13 @@ class RandomTreesEmbedding(TransformerMixin, BaseForest):
         **BaseDecisionTree._parameter_constraints,
         "sparse_output": ["boolean"],
     }
-    for param in ("max_features", "ccp_alpha", "splitter", "monotonic_cst"):
+    for param in (
+        "max_features",
+        "ccp_alpha",
+        "splitter",
+        "monotonic_cst",
+        "categorical_features",
+    ):
         _parameter_constraints.pop(param)
 
     criterion = "squared_error"

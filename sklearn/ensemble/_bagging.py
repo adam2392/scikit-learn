@@ -17,13 +17,14 @@ from sklearn.ensemble._base import BaseEnsemble, _partition_estimators
 from sklearn.ensemble._bootstrap import _get_n_samples_bootstrap
 from sklearn.metrics import accuracy_score, r2_score
 from sklearn.tree import DecisionTreeClassifier, DecisionTreeRegressor
-from sklearn.utils import Bunch, _safe_indexing, check_random_state, column_or_1d
+from sklearn.utils import _safe_indexing, check_random_state, column_or_1d
 from sklearn.utils._mask import indices_to_mask
 from sklearn.utils._param_validation import HasMethods, Interval, RealNotInt
 from sklearn.utils._tags import get_tags
 from sklearn.utils.metadata_routing import (
     MetadataRouter,
     MethodMapping,
+    _manual_routing,
     _raise_for_params,
     _routing_enabled,
     get_routing_for_object,
@@ -158,6 +159,15 @@ def _parallel_build_estimators(
             sample_weight,
         )
 
+        if (
+            requires_feature_indexing
+            and getattr(ensemble, "is_categorical_", None) is not None
+        ):
+            cat_subset = ensemble.is_categorical_[features]
+            estimator.set_params(
+                categorical_features=None if not np.any(cat_subset) else cat_subset
+            )
+
         fit_params_ = fit_params.copy()
 
         # Note: Row sampling can be achieved either through setting sample_weight or
@@ -199,7 +209,7 @@ def _parallel_predict_proba(
     for estimator, features in zip(estimators, estimators_features):
         if hasattr(estimator, "predict_proba"):
             proba_estimator = estimator.predict_proba(
-                X[:, features], **(predict_params or {})
+                X[:, features], **(predict_proba_params or {})
             )
 
             if n_classes == len(estimator.classes_):
@@ -212,9 +222,7 @@ def _parallel_predict_proba(
 
         else:
             # Resort to voting
-            predictions = estimator.predict(
-                X[:, features], **(predict_proba_params or {})
-            )
+            predictions = estimator.predict(X[:, features], **(predict_params or {}))
 
             for i in range(n_samples):
                 proba[i, predictions[i]] += 1
@@ -456,8 +464,7 @@ class BaseBagging(BaseEnsemble, metaclass=ABCMeta):
         if _routing_enabled():
             routed_params = process_routing(self, "fit", **fit_params)
         else:
-            routed_params = Bunch()
-            routed_params.estimator = Bunch(fit=fit_params)
+            routed_params = _manual_routing({"estimator": {"fit": fit_params}})
 
         if max_depth is not None:
             self.estimator_.max_depth = max_depth
@@ -1019,8 +1026,7 @@ class BaggingClassifier(ClassifierMixin, BaseBagging):
         if _routing_enabled():
             routed_params = process_routing(self, "predict_proba", **params)
         else:
-            routed_params = Bunch()
-            routed_params.estimator = Bunch(predict_proba=Bunch())
+            routed_params = _manual_routing({"estimator": {}})
 
         # Parallel loop
         n_jobs, _, starts = _partition_estimators(self.n_estimators, self.n_jobs)
@@ -1094,8 +1100,7 @@ class BaggingClassifier(ClassifierMixin, BaseBagging):
             if _routing_enabled():
                 routed_params = process_routing(self, "predict_log_proba", **params)
             else:
-                routed_params = Bunch()
-                routed_params.estimator = Bunch(predict_log_proba=Bunch())
+                routed_params = _manual_routing({"estimator": {}})
 
             # Parallel loop
             n_jobs, _, starts = _partition_estimators(self.n_estimators, self.n_jobs)
@@ -1172,8 +1177,7 @@ class BaggingClassifier(ClassifierMixin, BaseBagging):
         if _routing_enabled():
             routed_params = process_routing(self, "decision_function", **params)
         else:
-            routed_params = Bunch()
-            routed_params.estimator = Bunch(decision_function=Bunch())
+            routed_params = _manual_routing({"estimator": {}})
 
         # Parallel loop
         n_jobs, _, starts = _partition_estimators(self.n_estimators, self.n_jobs)
@@ -1430,8 +1434,7 @@ class BaggingRegressor(RegressorMixin, BaseBagging):
         if _routing_enabled():
             routed_params = process_routing(self, "predict", **params)
         else:
-            routed_params = Bunch()
-            routed_params.estimator = Bunch(predict=Bunch())
+            routed_params = _manual_routing({"estimator": {}})
 
         # Parallel loop
         n_jobs, _, starts = _partition_estimators(self.n_estimators, self.n_jobs)
