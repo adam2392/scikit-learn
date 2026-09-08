@@ -1982,9 +1982,9 @@ def test_no_sparse_with_categorical(name):
     with pytest.raises(
         NotImplementedError, match="Categorical features not supported with sparse"
     ):
-        Forest(
-            categorical_features=[3, 4], n_estimators=5, random_state=0
-        ).fit(X, y).predict(X_sparse)
+        Forest(categorical_features=[3, 4], n_estimators=5, random_state=0).fit(
+            X, y
+        ).predict(X_sparse)
 
 
 @pytest.mark.parametrize("name", FOREST_CLASSIFIERS)

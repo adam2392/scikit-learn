@@ -12,7 +12,7 @@ from scipy.sparse import issparse
 from sklearn.base import OutlierMixin, _fit_context
 from sklearn.ensemble._bagging import BaseBagging
 from sklearn.tree import BaseDecisionTree, ExtraTreeRegressor
-from sklearn.utils import check_array, check_random_state, gen_batches
+from sklearn.utils import check_random_state, gen_batches
 from sklearn.utils._chunking import get_chunk_n_rows
 from sklearn.utils._param_validation import Interval, RealNotInt, StrOptions
 from sklearn.utils.parallel import Parallel, delayed
@@ -321,32 +321,24 @@ class IsolationForest(OutlierMixin, BaseBagging):
             categorical_features=self.categorical_features,
         )
 
-    def _init_categorical_encoding(self, X):
-        """Fit the categorical encoder and return encoded X."""
-        tree_template = ExtraTreeRegressor(categorical_features=self.categorical_features)
-        tree_template.is_categorical_ = _check_categorical_features(
-            X, self.categorical_features
-        )
-        tree_template._fit_categorical_features(X)
-        self.is_categorical_ = tree_template.is_categorical_
-        self._categorical_encoder = tree_template._categorical_encoder
-        return tree_template._transform_categorical_features(X)
+    def _preprocess_X(self, X, *, reset):
+        """Encode categorical features and cast numerical features to float32.
 
-    def _transform_categorical_features(self, X):
-        tree_template = ExtraTreeRegressor(categorical_features=self.categorical_features)
-        tree_template.is_categorical_ = self.is_categorical_
-        tree_template._categorical_encoder = self._categorical_encoder
-        return tree_template._transform_categorical_features(X)
+        Reuses the tree implementation so IsolationForest stays aligned with
+        :class:`~sklearn.tree.ExtraTreeRegressor` preprocessing.
+        """
+        return BaseDecisionTree._preprocess_X(self, X, reset=reset)
 
     def _validate_X_predict(self, X):
         check_is_fitted(self)
-        if getattr(self, "is_categorical_", None) is not None:
+        has_categorical = self.is_categorical_ is not None
+        if has_categorical:
             if issparse(X):
                 raise NotImplementedError(
                     "Categorical features not supported with sparse inputs"
                 )
             validate_data(self, X, reset=False, skip_check_array=True)
-            X = self._transform_categorical_features(X)
+            X = self._preprocess_X(X, reset=False)
             X = check_array(
                 X,
                 input_name="X",
@@ -400,10 +392,8 @@ class IsolationForest(OutlierMixin, BaseBagging):
         self : object
             Fitted estimator.
         """
-        has_categorical = self.categorical_features is not None
-        if has_categorical:
-            is_categorical_ = _check_categorical_features(X, self.categorical_features)
-            has_categorical = is_categorical_ is not None
+        self.is_categorical_ = _check_categorical_features(X, self.categorical_features)
+        has_categorical = self.is_categorical_ is not None
 
         if has_categorical:
             if issparse(X):
@@ -411,7 +401,7 @@ class IsolationForest(OutlierMixin, BaseBagging):
                     "Categorical features not supported with sparse inputs"
                 )
             validate_data(self, X, reset=True, skip_check_array=True)
-            X = self._init_categorical_encoding(X)
+            X = self._preprocess_X(X, reset=True)
             X = validate_data(
                 self,
                 X,
@@ -421,10 +411,14 @@ class IsolationForest(OutlierMixin, BaseBagging):
                 reset=False,
             )
         else:
-            self.is_categorical_ = None
             self._categorical_encoder = None
+            self._preprocessor = None
             X = validate_data(
-                self, X, accept_sparse=["csc"], dtype=np.float32, ensure_all_finite=False
+                self,
+                X,
+                accept_sparse=["csc"],
+                dtype=np.float32,
+                ensure_all_finite=False,
             )
 
         if sample_weight is not None:

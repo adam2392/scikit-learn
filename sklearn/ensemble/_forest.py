@@ -334,16 +334,17 @@ class BaseForest(MultiOutputMixin, BaseEnsemble, metaclass=ABCMeta):
         if issparse(y):
             raise ValueError("sparse multilabel-indicator for y is not supported.")
 
-        has_categorical = getattr(self, "categorical_features", None) is not None
-        if has_categorical:
-            is_categorical_ = _check_categorical_features(X, self.categorical_features)
-            has_categorical = is_categorical_ is not None
+        categorical_features = getattr(self, "categorical_features", None)
+        self.is_categorical_ = _check_categorical_features(X, categorical_features)
+        has_categorical = self.is_categorical_ is not None
 
         if has_categorical:
             if issparse(X):
                 raise NotImplementedError(
                     "Categorical features not supported with sparse inputs"
                 )
+            # Capture feature names on the original dataframe-like input before
+            # categorical encoding converts X to a NumPy array.
             validate_data(
                 self,
                 X,
@@ -352,7 +353,10 @@ class BaseForest(MultiOutputMixin, BaseEnsemble, metaclass=ABCMeta):
                 reset=True,
                 skip_check_array=True,
             )
-            X = self._init_categorical_encoding(X)
+            X = self._preprocess_X(X, reset=True)
+            # X has already been encoded to a numeric array. Do not call
+            # validate_data(reset=True) again here because ndarray input would
+            # remove feature_names_in_ captured from the original container.
             X, y = validate_data(
                 self,
                 X,
@@ -364,8 +368,8 @@ class BaseForest(MultiOutputMixin, BaseEnsemble, metaclass=ABCMeta):
                 reset=False,
             )
         else:
-            self.is_categorical_ = None
             self._categorical_encoder = None
+            self._preprocessor = None
             X, y = validate_data(
                 self,
                 X,
@@ -638,26 +642,14 @@ class BaseForest(MultiOutputMixin, BaseEnsemble, metaclass=ABCMeta):
         # Default implementation
         return y, None
 
-    def _init_categorical_encoding(self, X):
-        """Fit the categorical encoder and return encoded X."""
-        tree_template = type(self.estimator)(
-            categorical_features=self.categorical_features
-        )
-        tree_template.is_categorical_ = _check_categorical_features(
-            X, self.categorical_features
-        )
-        tree_template._fit_categorical_features(X)
-        self.is_categorical_ = tree_template.is_categorical_
-        self._categorical_encoder = tree_template._categorical_encoder
-        return tree_template._transform_categorical_features(X)
+    def _preprocess_X(self, X, *, reset):
+        """Encode categorical features and cast numerical features to float32.
 
-    def _transform_categorical_features(self, X):
-        tree_template = type(self.estimator)(
-            categorical_features=self.categorical_features
-        )
-        tree_template.is_categorical_ = self.is_categorical_
-        tree_template._categorical_encoder = self._categorical_encoder
-        return tree_template._transform_categorical_features(X)
+        Reuses the tree implementation so forests stay aligned with
+        :class:`~sklearn.tree.DecisionTreeClassifier` /
+        :class:`~sklearn.tree.DecisionTreeRegressor` preprocessing.
+        """
+        return BaseDecisionTree._preprocess_X(self, X, reset=reset)
 
     def _validate_X_predict(self, X):
         """
@@ -668,13 +660,16 @@ class BaseForest(MultiOutputMixin, BaseEnsemble, metaclass=ABCMeta):
         else:
             ensure_all_finite = True
 
-        if getattr(self, "is_categorical_", None) is not None:
+        has_categorical = self.is_categorical_ is not None
+        if has_categorical:
             if issparse(X):
                 raise NotImplementedError(
                     "Categorical features not supported with sparse inputs"
                 )
+            # Check feature names on the original input before categorical
+            # encoding converts it to a NumPy array and drops dataframe metadata.
             validate_data(self, X, reset=False, skip_check_array=True)
-            X = self._transform_categorical_features(X)
+            X = self._preprocess_X(X, reset=False)
             X = check_array(
                 X,
                 input_name="X",
