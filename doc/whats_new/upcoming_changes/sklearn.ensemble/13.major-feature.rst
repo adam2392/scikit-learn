@@ -1,0 +1,5 @@
+- :class:`ensemble.IsolationForest` now accepts the `categorical_features` parameter,
+  defaulting to `"from_dtype"` like :class:`~sklearn.ensemble.HistGradientBoostingClassifier`.
+  Up to ``2**24 - 1`` categories per feature are supported.
+  ``warm_start`` is not supported together with categorical features.
+  By :user:`Adam Li <adam2392>`.
